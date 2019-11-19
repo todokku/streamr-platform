@@ -151,6 +151,17 @@ export const getJoinPartStreamId = (address: CommunityId, usePublicNode: boolean
 export const getCommunityStats = (id: CommunityId): ApiResult<Object> =>
     get(formatApiUrl('communities', id, 'stats'))
 
+export const getAllCommunityStats = (): ApiResult<Array<Object>> => Promise.resolve([
+    {
+        id: '0x3b11D489411BF11e843Cb28f8824dedBfcB75Df3',
+        memberCount: {
+            total: 0,
+            active: 0,
+            inactive: 0,
+        },
+    },
+])
+
 export const getStreamData = (id: CommunityId, fromTimestamp: number): ApiResult<Object> =>
     get(formatApiUrl('streams', id, 'data', 'partitions', 0, 'from', {
         fromTimestamp,

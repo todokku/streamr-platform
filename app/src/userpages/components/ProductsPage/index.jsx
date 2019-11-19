@@ -1,12 +1,11 @@
 // @flow
 
-import React, { Component, Fragment } from 'react'
-import { connect } from 'react-redux'
+import React, { Fragment, useRef, useEffect, useCallback, useState } from 'react'
+import { useDispatch, useSelector } from 'react-redux'
 import { Button } from 'reactstrap'
 import { Translate, I18n } from 'react-redux-i18n'
 import { Link } from 'react-router-dom'
 import { push } from 'connected-react-router'
-import copy from 'copy-to-clipboard'
 import Helmet from 'react-helmet'
 import moment from 'moment'
 
@@ -26,27 +25,14 @@ import DocsShortcuts from '$userpages/components/DocsShortcuts'
 import ListContainer from '$shared/components/Container/List'
 import TileGrid from '$shared/components/TileGrid'
 import { isCommunityProduct } from '$mp/utils/product'
+import { getAllCommunityStats } from '$mp/modules/communityProduct/actions'
+import { selectCommunityProducts, selectFetchingCommunityStats } from '$mp/modules/communityProduct/selectors'
+import useCopy from '$shared/hooks/useCopy'
 
-import type { ProductList, ProductId, Product } from '$mp/flowtype/product-types'
-import type { Filter, SortOption } from '$userpages/flowtype/common-types'
+import type { ProductId, Product } from '$mp/flowtype/product-types'
+import type { SortOption } from '$userpages/flowtype/common-types'
 
 import styles from './products.pcss'
-
-export type StateProps = {
-    products: ProductList,
-    filter: ?Filter,
-    fetching: boolean,
-}
-
-export type DispatchProps = {
-    getMyProducts: () => void,
-    updateFilter: (Filter) => void,
-    redirectToEditProduct: (id: ProductId) => void,
-    redirectToPublishProduct: (id: ProductId) => void,
-    copyUrl: (id: ProductId) => void,
-}
-
-type Props = StateProps & DispatchProps
 
 const CreateProductButton = () => (
     <Button
@@ -69,31 +55,108 @@ const getSortOptions = (): Array<SortOption> => {
     ]
 }
 
-class ProductsPage extends Component<Props> {
-    defaultFilter = getSortOptions()[0].filter
+const generateTimeAgoDescription = (productUpdatedDate: Date) => moment(productUpdatedDate).fromNow()
 
-    componentDidMount() {
-        const { filter, updateFilter, getMyProducts } = this.props
+type ProductActionsProps = {
+    product: Product,
+}
 
-        // Set default filter if not selected
+const ProductActions = ({ product }: ProductActionsProps) => {
+    const { id, state } = product
+    const dispatch = useDispatch()
+    const { copy } = useCopy()
+
+    const redirectToEditProduct = useCallback((id: ProductId) => (
+        dispatch(push(formatPath(links.marketplace.products, id, 'edit')))
+    ), [dispatch])
+
+    const redirectToPublishProduct = useCallback((id: ProductId) => (
+        dispatch(push(formatPath(links.marketplace.products, id, 'publish')))
+    ), [dispatch])
+
+    const copyUrl = useCallback((id: ProductId) => copy(formatExternalUrl(
+        process.env.PLATFORM_ORIGIN_URL,
+        links.marketplace.products,
+        id,
+    )), [copy])
+
+    return (
+        <Fragment>
+            <DropdownActions.Item
+                className={styles.item}
+                onClick={() => (!!redirectToEditProduct && redirectToEditProduct(id || ''))}
+            >
+                <Translate value="actionsDropdown.edit" />
+            </DropdownActions.Item>
+            {(state === productStates.DEPLOYED || state === productStates.NOT_DEPLOYED) &&
+                <DropdownActions.Item
+                    className={styles.item}
+                    onClick={() => (!!redirectToPublishProduct && redirectToPublishProduct(id || ''))}
+                >
+                    {(state === productStates.DEPLOYED) ?
+                        <Translate value="actionsDropdown.unpublish" /> :
+                        <Translate value="actionsDropdown.publish" />
+                    }
+                </DropdownActions.Item>
+            }
+            <DropdownActions.Item
+                className={styles.item}
+                onClick={() => copyUrl(id || '')}
+            >
+                <Translate value="actionsDropdown.copyUrl" />
+            </DropdownActions.Item>
+        </Fragment>
+    )
+}
+
+const ProductsPage = () => {
+    const dispatch = useDispatch()
+    const defaultFilterRef = useRef(getSortOptions()[0].filter)
+    const filter = useSelector(selectFilter)
+    const products = useSelector(selectMyProductList)
+    const fetching = useSelector(selectFetching)
+    const communityStats = useSelector(selectCommunityProducts)
+    const fetchingCommunityStats = useSelector(selectFetchingCommunityStats)
+    const [members, setMembers] = useState({})
+
+    useEffect(() => {
+        if (!communityStats || communityStats.length === 0) { return }
+
+        setMembers(communityStats.reduce((result, { id, memberCount }) => {
+            if (!memberCount) { return result }
+
+            return {
+                ...result,
+                [id.toLowerCase()]: memberCount.total,
+            }
+        }, {}))
+    }, [communityStats])
+
+    useEffect(() => {
         if (!filter) {
-            updateFilter(this.defaultFilter)
+            dispatch(updateFilter(defaultFilterRef.current))
         }
-        getMyProducts()
-    }
+    }, [filter, defaultFilterRef, dispatch])
 
-    onSearchChange = (value: string) => {
-        const { filter, updateFilter, getMyProducts } = this.props
+    useEffect(() => {
+        if (!filter) { return }
+
+        dispatch(getMyProducts())
+    }, [filter, dispatch])
+
+    useEffect(() => {
+        dispatch(getAllCommunityStats())
+    }, [dispatch])
+
+    const onSearchChange = useCallback((value: string) => {
         const newFilter = {
             ...filter,
             search: value,
         }
-        updateFilter(newFilter)
-        getMyProducts()
-    }
+        dispatch(updateFilter(newFilter))
+    }, [filter, dispatch])
 
-    onSortChange = (sortOptionId) => {
-        const { filter, updateFilter, getMyProducts } = this.props
+    const onSortChange = useCallback((sortOptionId) => {
         const sortOption = getSortOptions().find((opt) => opt.filter.id === sortOptionId)
 
         if (sortOption) {
@@ -101,152 +164,96 @@ class ProductsPage extends Component<Props> {
                 search: filter && filter.search,
                 ...sortOption.filter,
             }
-            updateFilter(newFilter)
-            getMyProducts()
+            dispatch(updateFilter(newFilter))
         }
-    }
+    }, [filter, dispatch])
 
-    resetFilter = () => {
-        const { updateFilter, getMyProducts } = this.props
-        updateFilter({
-            ...this.defaultFilter,
+    const resetFilter = useCallback(() => {
+        dispatch(updateFilter({
+            ...defaultFilterRef.current,
             search: '',
-        })
-        getMyProducts()
-    }
+        }))
+    }, [dispatch, defaultFilterRef])
 
-    getActions = ({ id, state }: Product) => {
-        const { redirectToEditProduct, redirectToPublishProduct, copyUrl } = this.props
-
-        return (
-            <Fragment>
-                <DropdownActions.Item
-                    className={styles.item}
-                    onClick={() => (!!redirectToEditProduct && redirectToEditProduct(id || ''))}
+    return (
+        <Layout
+            headerAdditionalComponent={<CreateProductButton />}
+            headerSearchComponent={
+                <Search
+                    placeholder={I18n.t('userpages.products.filterProducts')}
+                    value={(filter && filter.search) || ''}
+                    onChange={onSearchChange}
+                />
+            }
+            headerFilterComponent={
+                <Dropdown
+                    title={I18n.t('userpages.filter.sortBy')}
+                    onChange={onSortChange}
+                    selectedItem={(filter && filter.id) || defaultFilterRef.current.id}
                 >
-                    <Translate value="actionsDropdown.edit" />
-                </DropdownActions.Item>
-                {(state === productStates.DEPLOYED || state === productStates.NOT_DEPLOYED) &&
-                    <DropdownActions.Item
-                        className={styles.item}
-                        onClick={() => (!!redirectToPublishProduct && redirectToPublishProduct(id || ''))}
-                    >
-                        {(state === productStates.DEPLOYED) ?
-                            <Translate value="actionsDropdown.unpublish" /> :
-                            <Translate value="actionsDropdown.publish" />
-                        }
-                    </DropdownActions.Item>
-                }
-                <DropdownActions.Item
-                    className={styles.item}
-                    onClick={() => copyUrl(id || '')}
-                >
-                    <Translate value="actionsDropdown.copyUrl" />
-                </DropdownActions.Item>
-            </Fragment>
-        )
-    }
-
-    generateTimeAgoDescription = (productUpdatedDate: Date) => moment(productUpdatedDate).fromNow()
-
-    render() {
-        const { products, filter, fetching } = this.props
-
-        return (
-            <Layout
-                headerAdditionalComponent={<CreateProductButton />}
-                headerSearchComponent={
-                    <Search
-                        placeholder={I18n.t('userpages.products.filterProducts')}
-                        value={(filter && filter.search) || ''}
-                        onChange={this.onSearchChange}
+                    {getSortOptions().map((s) => (
+                        <Dropdown.Item key={s.filter.id} value={s.filter.id}>
+                            {s.displayName}
+                        </Dropdown.Item>
+                    ))}
+                </Dropdown>
+            }
+            loading={fetching}
+        >
+            <Helmet title={`Streamr Core | ${I18n.t('userpages.title.products')}`} />
+            <ListContainer className={styles.corepageContentContainer}>
+                {!fetching && products && !products.length && (
+                    <NoProductsView
+                        hasFilter={!!filter && (!!filter.search || !!filter.key)}
+                        filter={filter}
+                        onResetFilter={resetFilter}
                     />
-                }
-                headerFilterComponent={
-                    <Dropdown
-                        title={I18n.t('userpages.filter.sortBy')}
-                        onChange={this.onSortChange}
-                        selectedItem={(filter && filter.id) || this.defaultFilter.id}
-                    >
-                        {getSortOptions().map((s) => (
-                            <Dropdown.Item key={s.filter.id} value={s.filter.id}>
-                                {s.displayName}
-                            </Dropdown.Item>
-                        ))}
-                    </Dropdown>
-                }
-                loading={fetching}
-            >
-                <Helmet title={`Streamr Core | ${I18n.t('userpages.title.products')}`} />
-                <ListContainer className={styles.corepageContentContainer}>
-                    {!fetching && products && !products.length && (
-                        <NoProductsView
-                            hasFilter={!!filter && (!!filter.search || !!filter.key)}
-                            filter={filter}
-                            onResetFilter={this.resetFilter}
-                        />
-                    )}
-                    <TileGrid>
-                        {products.map((product) => {
-                            const isCommunity = isCommunityProduct(product)
+                )}
+                <TileGrid>
+                    {products.map((product) => {
+                        const isCommunity = isCommunityProduct(product)
+                        const beneficiaryAddress = (product.beneficiaryAddress || '').toLowerCase()
+                        const memberCount = members[beneficiaryAddress]
 
-                            return (
-                                <Link
-                                    key={product.id}
-                                    to={product.id && `${links.marketplace.products}/${product.id}`}
+                        return (
+                            <Link
+                                key={product.id}
+                                to={product.id && `${links.marketplace.products}/${product.id}`}
+                            >
+                                <Tile
+                                    imageUrl={product.imageUrl || ''}
+                                    dropdownActions={<ProductActions product={product} />}
+                                    labels={{
+                                        community: isCommunity,
+                                    }}
+                                    badges={(isCommunity && memberCount !== undefined) ? {
+                                        members: memberCount,
+                                    } : undefined}
+                                    deploying={!fetchingCommunityStats && (isCommunity && memberCount === undefined)}
                                 >
-                                    <Tile
-                                        imageUrl={product.imageUrl || ''}
-                                        dropdownActions={this.getActions(product)}
-                                        labels={{
-                                            community: isCommunity,
-                                        }}
-                                        badges={isCommunity ? {
-                                            members: '-',
-                                        } : undefined}
+                                    <Tile.Title>{product.name}</Tile.Title>
+                                    <Tile.Tag >
+                                        {product.updated === product.created ? 'Created ' : 'Updated '}
+                                        {product.updated && generateTimeAgoDescription(new Date(product.updated))}
+                                    </Tile.Tag>
+                                    <Tile.Tag
+                                        className={product.state === productStates.DEPLOYED ? styles.green : styles.grey}
                                     >
-                                        <Tile.Title>{product.name}</Tile.Title>
-                                        <Tile.Tag >
-                                            {product.updated === product.created ? 'Created ' : 'Updated '}
-                                            {product.updated && this.generateTimeAgoDescription(new Date(product.updated))}
-                                        </Tile.Tag>
-                                        <Tile.Tag
-                                            className={product.state === productStates.DEPLOYED ? styles.green : styles.grey}
-                                        >
-                                            {
-                                                product.state === productStates.DEPLOYED ?
-                                                    <Translate value="userpages.products.published" /> :
-                                                    <Translate value="userpages.products.draft" />
-                                            }
-                                        </Tile.Tag>
-                                    </Tile>
-                                </Link>
-                            )
-                        })}
-                    </TileGrid>
-                </ListContainer>
-                <DocsShortcuts />
-            </Layout>
-        )
-    }
+                                        {
+                                            product.state === productStates.DEPLOYED ?
+                                                <Translate value="userpages.products.published" /> :
+                                                <Translate value="userpages.products.draft" />
+                                        }
+                                    </Tile.Tag>
+                                </Tile>
+                            </Link>
+                        )
+                    })}
+                </TileGrid>
+            </ListContainer>
+            <DocsShortcuts />
+        </Layout>
+    )
 }
 
-export const mapStateToProps = (state: any): StateProps => ({
-    products: selectMyProductList(state),
-    filter: selectFilter(state),
-    fetching: selectFetching(state),
-})
-
-export const mapDispatchToProps = (dispatch: Function): DispatchProps => ({
-    getMyProducts: () => dispatch(getMyProducts()),
-    updateFilter: (filter: Filter) => dispatch(updateFilter(filter)),
-    redirectToEditProduct: (id: ProductId) => dispatch(push(formatPath(links.marketplace.products, id, 'edit'))),
-    redirectToPublishProduct: (id: ProductId) => dispatch(push(formatPath(links.marketplace.products, id, 'publish'))),
-    copyUrl: (id: ProductId) => copy(formatExternalUrl(
-        process.env.PLATFORM_ORIGIN_URL,
-        links.marketplace.products,
-        id,
-    )),
-})
-
-export default connect(mapStateToProps, mapDispatchToProps)(ProductsPage)
+export default ProductsPage

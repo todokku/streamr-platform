@@ -8,8 +8,18 @@ export type CommunityIdAction = PayloadAction<{
 }>
 export type CommunityIdActionCreator = (CommunityId) => CommunityIdAction
 
+export type CommunityIdsAction = PayloadAction<{
+    ids: Array<CommunityId>,
+}>
+export type CommunityIdsActionCreator = (Array<CommunityId>) => CommunityIdsAction
+
 export type CommunityErrorAction = PayloadAction<{
     id: CommunityId,
     error: ErrorInUi
 }>
 export type CommunityErrorActionCreator = (id: CommunityId, error: ErrorInUi) => CommunityErrorAction
+
+export type CommunityStatsErrorAction = PayloadAction<{
+    error: ErrorInUi
+}>
+export type CommunityStatsErrorActionCreator = (error: ErrorInUi) => CommunityStatsErrorAction
