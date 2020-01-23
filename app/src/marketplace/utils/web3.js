@@ -58,27 +58,63 @@ export const getBalances = (): Promise<[BN, BN, BN]> => {
 }
 
 /**
- * Returns the DAI and ETH value equivalents for a given quanity of DATA through a 'Uniswap'.
- * A safety margin is added to ensure transactions succeed incase of slippage and token volatility.
+ * getUniswapEquivalents() returns the DAI and ETH value equivalents for a given quanity of DATA through a 'Uniswap'.
+ * Firstly, an approximate equivalent of DATA -> SECONDARY is requested from the contract using getConversionRate.
+ * Then, we verify through getConversionRate, in reverse: SECONDARY -> DATA that the returned DATA value
+ * is greater than or equal to the price of the product in DATA. If it is not, then increase SECONDARY by 2%
+ * and try again. After 20 attempts, abandon the uniswap. This equates to a price slippage of approx 40%
+ * compared with the actual price if the user was to pay in native DATA.
+ *
+ * !!!Note some versions of web3 will return a BigNumber from the Ethers library. This has a
+ * different prototype compared with BigNumber (BN). This is why extra BNs are used in this function.
+ *
  * @param dataQuantity Number of DATA coins.
  */
 export const getUniswapEquivalents = async (dataQuantity: string): Promise<[BN, BN]> => {
     const web3 = getWeb3()
-    const amount = web3.utils.toWei(dataQuantity)
+    const productPriceDATA = web3.utils.toWei(dataQuantity)
     const DATA = process.env.DATA_TOKEN_CONTRACT_ADDRESS
     const ETH = '0x0000000000000000000000000000000000000000'
     const DAI = process.env.DAI_TOKEN_CONTRACT_ADDRESS
-    const safetyMargin = 1.05
 
-    let ethValue = await call(uniswapAdaptorMethods().getConversionRate(DATA, ETH, amount))
-    ethValue = BN(ethValue).toNumber() * safetyMargin
-    ethValue = BN(web3.utils.fromWei(ethValue.toString()))
+    // ETH
+    let uniswapETH = await call(uniswapAdaptorMethods().getConversionRate(DATA, ETH, productPriceDATA))
+    uniswapETH = BN(uniswapETH.toString())
+    let uniswapDATAfromETH = BN(0)
+    let liquidityIssueETH = false
 
-    let daiValue = await call(uniswapAdaptorMethods().getConversionRate(DATA, DAI, amount))
-    daiValue = BN(daiValue).toNumber() * safetyMargin
-    daiValue = BN(web3.utils.fromWei(daiValue.toString()))
+    for (let i = 1; BN(productPriceDATA).isGreaterThan(uniswapDATAfromETH) && i < 21; i += 1) {
+        uniswapETH = uniswapETH.toFixed(0, 2)
+        // eslint-disable-next-line no-await-in-loop
+        uniswapDATAfromETH = await call(uniswapAdaptorMethods().getConversionRate(ETH, DATA, uniswapETH))
+        uniswapETH = BN(BN(uniswapETH).multipliedBy(((i * 0.02) + 1)))
 
-    return [ethValue, daiValue]
+        if (i === 20) {
+            liquidityIssueETH = true
+        }
+    }
+
+    // DAI
+    let uniswapDAI = await call(uniswapAdaptorMethods().getConversionRate(DATA, DAI, productPriceDATA))
+    uniswapDAI = BN(uniswapDAI.toString())
+    let uniswapDATAfromDAI = BN(0)
+    let liquidityIssueDAI = false
+
+    for (let i = 1; BN(productPriceDATA).isGreaterThan(uniswapDATAfromDAI) && i < 21; i += 1) {
+        uniswapDAI = uniswapDAI.toFixed(0, 2)
+        // eslint-disable-next-line no-await-in-loop
+        uniswapDATAfromDAI = await call(uniswapAdaptorMethods().getConversionRate(DAI, DATA, uniswapDAI))
+        uniswapDAI = BN(BN(uniswapDAI).multipliedBy(((i * 0.02) + 1)))
+
+        if (i === 20) {
+            liquidityIssueDAI = true
+        }
+    }
+
+    uniswapETH = liquidityIssueETH ? BN('Infinity') : BN(web3.utils.fromWei(uniswapETH.toFixed(0).toString()))
+    uniswapDAI = liquidityIssueDAI ? BN('Infinity') : BN(web3.utils.fromWei(uniswapDAI.toFixed(0).toString()))
+
+    return [uniswapETH, uniswapDAI]
 }
 
 export const validateBalanceForPurchase = async (price: BN, paymentCurrency: PaymentCurrency) => {
