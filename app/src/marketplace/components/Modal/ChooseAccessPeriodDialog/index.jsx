@@ -80,18 +80,40 @@ export const ChooseAccessPeriodDialog = ({
 
     const isValidTime = useCallback(() => !BN(time).isNaN() && BN(time).isGreaterThan(0), [time])
 
+    const isValidPrice = useCallback(() => {
+        if (paymentCurrency === paymentCurrencies.ETH) {
+            if (BN(priceInEth).isNaN() || !BN(priceInEth).isGreaterThan(0) || !BN(priceInEth).isFinite()) {
+                return false
+            }
+        }
+
+        if (paymentCurrency === paymentCurrencies.DAI) {
+            if (BN(priceInDai).isNaN() || !BN(priceInDai).isGreaterThan(0) || !BN(priceInDai).isFinite()) {
+                return false
+            }
+        }
+
+        return true
+    }, [paymentCurrency, priceInEth, priceInDai])
+
     const getProductPrices = useCallback(async () => {
         if (isValidTime()) {
             setLoading(true)
             const [ethValue, daiValue] = await getUniswapEquivalents(priceInData)
             setLoading(false)
-            setPriceInEth(formatDecimals(ethValue, paymentCurrencies.ETH).toString())
-            setPriceInDai(formatDecimals(daiValue, paymentCurrencies.DAI).toString())
+
+            if (BN(priceInEth).isFinite() || !BN(priceInEth).isGreaterThan(0)) {
+                setPriceInEth(formatDecimals(ethValue, paymentCurrencies.ETH).toString())
+            }
+
+            if (BN(priceInDai).isFinite() || !BN(priceInDai).isGreaterThan(0)) {
+                setPriceInDai(formatDecimals(daiValue, paymentCurrencies.DAI).toString())
+            }
         } else {
             setPriceInEth('-')
             setPriceInDai('-')
         }
-    }, [isValidTime, priceInData])
+    }, [isValidTime, priceInDai, priceInData, priceInEth])
 
     const getAccountBalance = useCallback(async () => {
         setLoading(true)
@@ -174,7 +196,7 @@ export const ChooseAccessPeriodDialog = ({
                         kind: 'primary',
                         outline: true,
                         onClick: () => onNext(time, timeUnit, paymentCurrency),
-                        disabled: !isValidTime() || loading,
+                        disabled: !isValidTime() || !isValidPrice() || loading,
                     },
                 }}
                 contentClassName={styles.noPadding}
